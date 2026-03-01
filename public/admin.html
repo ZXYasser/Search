@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="إدارة الفهرس — رفع المستندات وبناء فهرس البحث" />
+  <title>إدارة الفهرس — Smart Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+    .section { margin-bottom: 28px; }
+    .section-title { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 40px 24px; text-align: center; color: var(--text-muted);
+      transition: all var(--transition); position: relative;
+    }
+    .upload-zone.dragover { border-color: var(--accent-blue); background: rgba(59, 130, 246, 0.08); }
+    .upload-zone input { display: none; }
+    .upload-zone label { cursor: pointer; display: block; }
+    .upload-zone .upload-icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.6; }
+    .upload-zone .upload-text { font-weight: 500; color: var(--text); }
+    .upload-zone .upload-hint { font-size: 0.85rem; margin-top: 6px; }
+    .file-cards { margin-top: 16px; display: grid; gap: 10px; }
+    .file-card-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px 16px; font-size: 0.9rem;
+    }
+    .file-card-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-card-item .size { color: var(--text-muted); font-size: 0.8rem; }
+    .file-card-item .remove { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 8px; font-size: 1.1rem; }
+    .file-card-item .remove:hover { color: var(--error); }
+    .name-field { margin-top: 20px; }
+    .name-field .label-name { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; }
+    .name-field .hint { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; }
+    textarea { min-height: 140px; resize: vertical; }
+    .row { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+    .input-sm { max-width: 130px; }
+    .status { margin-top: 24px; padding: 20px; border-radius: var(--radius); font-size: 0.95rem; }
+    .status.success { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--accent); }
+    .status.error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.4); color: var(--error); }
+    .status.loading { background: var(--surface); border: 1px solid var(--border); }
+    .btn-primary.admin { background: var(--accent-blue); }
+    .btn-primary.admin:hover { background: var(--accent-blue-hover); }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header>
+      <h1>⚙️ إدارة الفهرس</h1>
+      <a class="link-client" href="/">← العودة لصفحة البحث</a>
+    </header>
+
+    <section class="section">
+      <h3 class="section-title">1) رفع الملفات</h3>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" multiple accept=".pptx,.ppt,.txt,.md" />
+        <label for="fileInput">
+          <div class="upload-icon">📤</div>
+          <div class="upload-text">اضغط أو اسحب الملفات هنا</div>
+          <div class="upload-hint">PPTX • TXT • MD (حد أقصى 50 ميجابايت)</div>
+        </label>
+      </div>
+      <div class="file-cards" id="fileCards"></div>
+      <div class="name-field">
+        <label for="docName" class="label-name">اسم المستند</label>
+        <input type="text" id="docName" class="input-name" placeholder="مثال: مبادرة استدامة التجهيزات" />
+        <span class="hint">اسم واضح يظهر للعملاء بدل اسم الملف</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h3 class="section-title">2) أو الصق النص مباشرة</h3>
+      <textarea id="bigText" placeholder="الصق النص هنا (اختياري)..."></textarea>
+      <p class="hint" style="margin-top:8px">إذا استخدمت النص المُلصق، أدخل «اسم المستند» أعلاه.</p>
+    </section>
+
+    <section class="section">
+      <h3 class="section-title">3) بناء الفهرس</h3>
+      <div class="row">
+        <button class="btn btn-primary admin" id="build">بناء الفهرس</button>
+        <input id="chunkSize" class="input-sm" placeholder="Chunk (900)" type="number" title="حجم المقطع" />
+        <input id="overlap" class="input-sm" placeholder="Overlap (150)" type="number" title="التداخل" />
+      </div>
+    </section>
+
+    <div class="status" id="status" style="display:none;"></div>
+  </div>
+
+<script>
+const ALLOWED_EXT = [".pptx", ".ppt", ".txt", ".md"];
+const MAX_SIZE = 50 * 1024 * 1024;
+
+const fileInput = document.getElementById("fileInput");
+const fileCards = document.getElementById("fileCards");
+const uploadZone = document.getElementById("uploadZone");
+let selectedFiles = [];
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + " بايت";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " ك.ب";
+  return (bytes / (1024 * 1024)).toFixed(1) + " م.ب";
+}
+
+function validateFile(file) {
+  const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
+  if (!ALLOWED_EXT.includes(ext)) return `نوع غير مدعوم: ${file.name}`;
+  if (file.size > MAX_SIZE) return `الملف كبير جداً: ${file.name}`;
+  return null;
+}
+
+fileInput.addEventListener("change", () => {
+  const files = Array.from(fileInput.files);
+  const valid = []; const errors = [];
+  files.forEach(f => {
+    const err = validateFile(f);
+    if (err) errors.push(err);
+    else valid.push(f);
+  });
+  if (errors.length) alert(errors.join("\n"));
+  selectedFiles = valid;
+  renderFileCards();
+});
+
+uploadZone.addEventListener("dragover", e => { e.preventDefault(); e.stopPropagation(); uploadZone.classList.add("dragover"); });
+uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragover"));
+uploadZone.addEventListener("drop", e => {
+  e.preventDefault();
+  uploadZone.classList.remove("dragover");
+  if (e.dataTransfer.files.length) {
+    fileInput.files = e.dataTransfer.files;
+    fileInput.dispatchEvent(new Event("change"));
+  }
+});
+
+function renderFileCards() {
+  if (selectedFiles.length === 0) {
+    fileCards.innerHTML = "";
+    return;
+  }
+  fileCards.innerHTML = selectedFiles.map((f, i) => `
+    <div class="file-card-item" data-i="${i}">
+      <span class="name" title="${f.name}">📄 ${f.name}</span>
+      <span class="size">${formatSize(f.size)}</span>
+      <button class="remove" data-i="${i}" type="button" title="إزالة">✕</button>
+    </div>
+  `).join("");
+
+  fileCards.querySelectorAll(".remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const i = parseInt(btn.dataset.i, 10);
+      selectedFiles = selectedFiles.filter((_, idx) => idx !== i);
+      const dt = new DataTransfer();
+      selectedFiles.forEach(f => dt.items.add(f));
+      fileInput.files = dt.files;
+      renderFileCards();
+    });
+  });
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = "status " + (type || "");
+  el.style.display = "block";
+}
+
+document.getElementById("build").addEventListener("click", async () => {
+  const text = document.getElementById("bigText").value.trim();
+  const docName = document.getElementById("docName").value.trim();
+  const chunkSize = document.getElementById("chunkSize").value || 900;
+  const overlap = document.getElementById("overlap").value || 150;
+
+  if (selectedFiles.length === 0 && text.length < 50) {
+    showStatus("ارفع ملفات أو الصق نصًا (أكثر من 50 حرف).", "error");
+    return;
+  }
+
+  if (!docName) {
+    showStatus("أدخل اسم المستند.", "error");
+    return;
+  }
+
+  const btn = document.getElementById("build");
+  btn.disabled = true;
+  showStatus("جاري بناء الفهرس… قد يستغرق دقائق للملفات الكبيرة", "loading");
+
+  const form = new FormData();
+  form.append("chunkSize", chunkSize);
+  form.append("overlap", overlap);
+  form.append("documentName", docName);
+  if (text) form.append("text", text);
+  selectedFiles.forEach(f => form.append("files", f));
+
+  try {
+    const r = await fetch("/api/index", { method: "POST", body: form });
+    const data = await r.json();
+    if (!r.ok) {
+      showStatus(data.error || "حدث خطأ", "error");
+      return;
+    }
+    showStatus(`✅ تمت إضافة "${data.documentName}" — ${data.chunks} مقطع (إجمالي: ${data.totalFiles || 1} مستند)`, "success");
+    selectedFiles = [];
+    fileInput.value = "";
+    renderFileCards();
+    document.getElementById("bigText").value = "";
+    document.getElementById("docName").value = "";
+  } catch (e) {
+    showStatus("فشل الاتصال: " + e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

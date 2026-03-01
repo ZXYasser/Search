@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="بحث ذكي دلالي داخل المستندات — اختَر مستندًا وابحث بداخله" />
+  <title>بحث ذكي — Smart Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .files-section { margin-bottom: 28px; }
+    .files-title { font-size: 1rem; font-weight: 600; margin-bottom: 14px; color: var(--text); }
+    .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+    .file-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; cursor: pointer;
+      transition: all var(--transition); text-align: center;
+    }
+    .file-card:hover { border-color: rgba(16, 185, 129, 0.5); box-shadow: var(--shadow); transform: translateY(-2px); }
+    .file-card.active { border-color: var(--accent); background: var(--accent-subtle); }
+    .file-card .icon { font-size: 2rem; margin-bottom: 10px; opacity: 0.9; }
+    .file-card .name { font-weight: 600; font-size: 0.95rem; line-height: 1.4; }
+    .file-card .chunks { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }
+    .search-section { margin-top: 28px; }
+    .search-box { display: flex; gap: 12px; align-items: stretch; margin-bottom: 20px; }
+    .search-box input { flex: 1; }
+    .current-file { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 12px; }
+    .current-file strong { color: var(--accent); }
+    .results { margin-top: 24px; display: grid; gap: 16px; }
+    .result-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 22px;
+      transition: all var(--transition); position: relative;
+    }
+    .result-card:hover { border-color: rgba(16, 185, 129, 0.4); box-shadow: var(--shadow); }
+    .result-meta { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .result-badge { background: var(--accent-subtle); color: var(--accent); padding: 4px 10px; border-radius: 6px; font-weight: 600; }
+    .result-content { font-size: 0.95rem; line-height: 1.8; }
+    .result-card .btn-copy { position: absolute; top: 16px; left: 16px; padding: 6px 12px; font-size: 0.8rem; }
+    mark { background: rgba(16, 185, 129, 0.25); color: var(--accent); padding: 2px 5px; border-radius: 4px; font-weight: 500; }
+    .empty-state { padding: 48px 24px; }
+    .empty-state .icon { font-size: 3rem; opacity: 0.4; margin-bottom: 16px; }
+    @media (max-width: 600px) { .layout { padding: 24px 16px; } .search-box { flex-direction: column; } .files-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <a class="link-admin" href="/admin.html">⚙️ إدارة الفهرس</a>
+  <div class="layout">
+    <header>
+      <h1>🔍 بحث ذكي</h1>
+      <p class="sub">اختر مستندًا ثم ابحث بداخله — بحث دلالي بدعم الذكاء الاصطناعي</p>
+    </header>
+
+    <section class="files-section">
+      <h3 class="files-title">المستندات المتاحة</h3>
+      <div class="files-grid" id="filesGrid"></div>
+    </section>
+
+    <section class="search-section" id="searchSection">
+      <div class="current-file" id="currentFile"></div>
+      <div class="search-box">
+        <input id="q" placeholder="اكتب سؤال أو كلمة للبحث..." autocomplete="off" />
+        <button class="btn btn-primary" id="go">بحث</button>
+      </div>
+    </section>
+
+    <div class="results" id="results"></div>
+  </div>
+
+<script>
+let selectedFileId = null;
+let filesData = [];
+
+async function loadFiles() {
+  const el = document.getElementById("filesGrid");
+  el.innerHTML = '<div class="card-message loading-dots">جاري التحميل</div>';
+
+  try {
+    const r = await fetch("/api/files");
+    const data = await r.json();
+    filesData = data.files || [];
+
+    if (filesData.length === 0) {
+      el.innerHTML = `
+        <div class="card-message empty-state">
+          <div class="icon">📂</div>
+          <p>لا توجد مستندات</p>
+          <p style="font-size:0.9rem; margin-top:8px">قم بإضافة ملفات من <a href="/admin.html" style="color:var(--accent); font-weight:600">صفحة الإدارة</a></p>
+        </div>`;
+      document.getElementById("searchSection").style.display = "none";
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="file-card active" data-id="all" title="البحث في كل المستندات">
+        <div class="icon">📚</div>
+        <div class="name">كل المستندات</div>
+        <div class="chunks">بحث شامل</div>
+      </div>` +
+    filesData.map(f => `
+      <div class="file-card" data-id="${escapeHtml(f.id)}" title="${escapeHtml(f.title)}">
+        <div class="icon">📄</div>
+        <div class="name">${escapeHtml(f.title)}</div>
+        <div class="chunks">${f.chunkCount} مقطع</div>
+      </div>
+    `).join("");
+
+    selectedFileId = "all";
+    document.getElementById("currentFile").innerHTML = 'البحث ضمن: <strong>كل المستندات</strong>';
+    document.getElementById("searchSection").style.display = "block";
+
+    el.querySelectorAll(".file-card").forEach(card => {
+      card.addEventListener("click", () => {
+        selectedFileId = card.dataset.id;
+        document.querySelectorAll(".file-card").forEach(c => c.classList.remove("active"));
+        card.classList.add("active");
+        const file = selectedFileId === "all" ? null : filesData.find(f => f.id === selectedFileId);
+        document.getElementById("currentFile").innerHTML = selectedFileId === "all"
+          ? 'البحث ضمن: <strong>كل المستندات</strong>'
+          : `البحث ضمن: <strong>${escapeHtml(file.title)}</strong>`;
+        document.getElementById("results").innerHTML = "";
+      });
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="card-message error">فشل التحميل: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function escapeHtml(str) {
+  return String(str || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function highlight(text, query) {
+  const q = query.trim();
+  if (!q) return escapeHtml(text);
+  return escapeHtml(text).replaceAll(escapeHtml(q), `<mark>${escapeHtml(q)}</mark>`);
+}
+
+function showMessage(msg, type = "info") {
+  document.getElementById("results").innerHTML = `<div class="card-message ${type}">${escapeHtml(msg)}</div>`;
+}
+
+function showLoading(msg) {
+  document.getElementById("results").innerHTML = `<div class="card-message loading-dots">${escapeHtml(msg)}</div>`;
+}
+
+async function doSearch() {
+  const query = document.getElementById("q").value;
+  if (!query.trim()) {
+    showMessage("اكتب كلمة أو سؤال للبحث.", "error");
+    return;
+  }
+
+  showLoading("جاري البحث…");
+
+  try {
+    const r = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, topK: 10, fileId: selectedFileId === "all" ? undefined : selectedFileId })
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      showMessage(data.error || "حدث خطأ", "error");
+      return;
+    }
+
+    const el = document.getElementById("results");
+    if (!data.results || data.results.length === 0) {
+      el.innerHTML = `
+        <div class="card-message">
+          <div style="font-size:2rem; margin-bottom:12px">🔎</div>
+          <p>${escapeHtml(data.message || "لا توجد نتائج تطابق البحث.")}</p>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML = data.results.map((it, idx) => `
+      <div class="result-card">
+        <button class="btn btn-secondary btn-copy" data-text="${escapeHtml(it.text).replace(/"/g, '&quot;')}" title="نسخ">📋</button>
+        <div class="result-meta">
+          <span class="result-badge">النتيجة ${idx + 1}</span>
+          <span>التشابه: ${it.score.toFixed(3)}</span>
+        </div>
+        <div class="result-content">${highlight(it.text, query)}</div>
+      </div>
+    `).join("");
+
+    el.querySelectorAll(".btn-copy").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const text = btn.dataset.text || "";
+        navigator.clipboard?.writeText(text).then(() => {
+          btn.textContent = "✓";
+          setTimeout(() => btn.textContent = "📋", 1500);
+        }).catch(() => {});
+      });
+    });
+  } catch (e) {
+    showMessage("فشل الاتصال: " + e.message, "error");
+  }
+}
+
+document.getElementById("go").addEventListener("click", doSearch);
+document.getElementById("q").addEventListener("keydown", e => {
+  if (e.key === "Enter") doSearch();
+});
+
+loadFiles();
+</script>
+</body>
+</html>
