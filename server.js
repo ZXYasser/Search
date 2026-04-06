@@ -63,6 +63,13 @@ function cosine(a, b) {
   return dot(a, b) / (na * nb);
 }
 
+function embedModelBase(name) {
+  return (name || "").trim().replace(/:latest$/i, "");
+}
+function sameEmbedModel(a, b) {
+  return embedModelBase(a) === embedModelBase(b);
+}
+
 async function ollamaEmbed(texts, model = OLLAMA_EMBED_MODEL) {
   const out = [];
   for (const t of texts) {
@@ -142,6 +149,15 @@ app.get("/api/files", (req, res) => {
   res.json({ ok: true, files: idx.files || [] });
 });
 
+app.post("/api/reset-index", (req, res) => {
+  try {
+    if (fs.existsSync(INDEX_PATH)) fs.unlinkSync(INDEX_PATH);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/index", async (req, res) => {
   try {
     const chunkSize = Number(req.body?.chunkSize) || 900;
@@ -185,6 +201,15 @@ app.post("/api/index", async (req, res) => {
 
     const fileId = `f${Date.now()}`;
     const existingIndex = loadIndex();
+    if (
+      existingIndex?.model &&
+      !sameEmbedModel(existingIndex.model, OLLAMA_EMBED_MODEL)
+    ) {
+      return res.status(400).json({
+        error:
+          `الفهرس مبني بنموذج «${existingIndex.model}» والخادم مضبوط على «${OLLAMA_EMBED_MODEL}». من صفحة الإدارة اضغط «مسح الفهرس» ثم أعد البناء، أو غيّر OLLAMA_EMBED_MODEL ليطابق الفهرس.`
+      });
+    }
     const maxChunkId = existingIndex?.chunks?.length
       ? Math.max(...existingIndex.chunks.map(c => c.id), -1) + 1
       : 0;
@@ -196,7 +221,9 @@ app.post("/api/index", async (req, res) => {
       embedding: null
     }));
 
-    const embedModel = existingIndex?.model || OLLAMA_EMBED_MODEL;
+    const embedModel = existingIndex?.chunks?.length
+      ? (existingIndex.model || OLLAMA_EMBED_MODEL)
+      : OLLAMA_EMBED_MODEL;
     const embeddings = await ollamaEmbed(allNewChunks.map(c => c.text), embedModel);
     allNewChunks.forEach((c, i) => { c.embedding = embeddings[i]; });
 

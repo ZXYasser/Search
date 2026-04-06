@@ -86,6 +86,12 @@
         <input id="chunkSize" class="input-sm" placeholder="Chunk (900)" type="number" title="حجم المقطع" />
         <input id="overlap" class="input-sm" placeholder="Overlap (150)" type="number" title="التداخل" />
       </div>
+      <p class="hint" style="margin-top:10px">
+        إذا غيّرت نموذج التضمين على الخادم (مثلاً من nomic إلى all-minilm)، امسح الفهرس ثم أعد البناء.
+      </p>
+      <div class="row" style="margin-top:8px">
+        <button type="button" class="btn" id="resetIndex" style="border-color:var(--error);color:var(--error)">مسح الفهرس بالكامل</button>
+      </div>
     </section>
 
     <div class="status" id="status" style="display:none;"></div>
@@ -168,6 +174,25 @@ function showStatus(msg, type) {
   el.className = "status " + (type || "");
   el.style.display = "block";
 }
+
+document.getElementById("resetIndex").addEventListener("click", async () => {
+  if (!confirm("سيتم حذف كل المستندات والمقاطع في الفهرس. هل أنت متأكد؟")) return;
+  const btn = document.getElementById("resetIndex");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/reset-index", { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) {
+      showStatus(data.error || "تعذر المسح", "error");
+      return;
+    }
+    showStatus("✅ تم مسح الفهرس. يمكنك الآن بناء فهرس جديد.", "success");
+  } catch (e) {
+    showStatus("فشل الاتصال: " + e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById("build").addEventListener("click", async () => {
   const text = document.getElementById("bigText").value.trim();
