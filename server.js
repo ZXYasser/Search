@@ -32,6 +32,8 @@ app.use(express.static(path.join(__dirname, "public")));
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
 // افتراضي خفيف مناسب لخطط الرام المحدودة (Render مجاني). للجودة الأعلى محلياً: OLLAMA_EMBED_MODEL=nomic-embed-text
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "all-minilm";
+// all-minilm نافذة ~512 رمز؛ النصوص العربية الطويلة تحتاج حد أحرف أقل (قابل للزيادة مع nomic عبر البيئة)
+const OLLAMA_EMBED_MAX_CHARS = Math.max(64, Number(process.env.OLLAMA_EMBED_MAX_CHARS) || 380);
 const PYTHON_CMD = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
 
 // --------- helpers ----------
@@ -71,21 +73,61 @@ function sameEmbedModel(a, b) {
   return embedModelBase(a) === embedModelBase(b);
 }
 
+function averageEmbeddings(vectors) {
+  if (!vectors.length) return null;
+  if (vectors.length === 1) return vectors[0];
+  const dim = vectors[0].length;
+  const sum = new Array(dim).fill(0);
+  for (const v of vectors) {
+    for (let i = 0; i < dim; i++) sum[i] += v[i];
+  }
+  const n = vectors.length;
+  for (let i = 0; i < dim; i++) sum[i] /= n;
+  const na = norm(sum);
+  if (!na) return sum;
+  for (let i = 0; i < dim; i++) sum[i] /= na;
+  return sum;
+}
+
+async function ollamaEmbedOnePiece(prompt, model) {
+  const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, prompt })
+  });
+  if (!r.ok) {
+    const err = await r.text();
+    throw new Error("Ollama embeddings error: " + err);
+  }
+  const data = await r.json();
+  return data.embedding;
+}
+
+async function ollamaEmbedSingleText(text, model = OLLAMA_EMBED_MODEL) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) {
+    throw new Error("فشل التضمين: مقطع نصي فارغ.");
+  }
+  const max = OLLAMA_EMBED_MAX_CHARS;
+  if (trimmed.length <= max) {
+    return ollamaEmbedOnePiece(trimmed, model);
+  }
+  const pieces = [];
+  for (let i = 0; i < trimmed.length; i += max) {
+    pieces.push(trimmed.slice(i, i + max));
+  }
+  const vectors = [];
+  for (const p of pieces) {
+    vectors.push(await ollamaEmbedOnePiece(p, model));
+  }
+  return averageEmbeddings(vectors);
+}
+
 async function ollamaEmbed(texts, model = OLLAMA_EMBED_MODEL) {
   const out = [];
   for (const t of texts) {
-    console.log("[ollamaEmbed] model=%s chars=%s", model, t.length);
-    const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: t })
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      throw new Error("Ollama embeddings error: " + err);
-    }
-    const data = await r.json();
-    out.push(data.embedding);
+    console.log("[ollamaEmbed] model=%s chars=%s", model, (t || "").length);
+    out.push(await ollamaEmbedSingleText(t, model));
   }
   return out;
 }
