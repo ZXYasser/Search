@@ -41,47 +41,42 @@ npm run dev
 
 ---
 
-## النشر على Vercel
+## النشر على الإنترنت (مع Ollama)
 
-⚠️ **ملاحظة مهمة**: هذا المشروع يعتمد على:
-- **Ollama** (يعمل محلياً على المنفذ 11434)
-- **تخزين ملفي** (data/index.json)
-- **Python** لاستخراج نص PPTX
+**الموصى به: [Railway](https://railway.app)** — خدمتان: التطبيق (من `Dockerfile`) + Ollama.  
+الدليل خطوة بخطوة: **[DEPLOY.md](./DEPLOY.md)**
 
-على **Vercel**:
-- لا يتوفر Ollama — تحتاج لتوفير API تضمين سحابي (مثل OpenAI)
-- التخزين مؤقت — تحتاج قاعدة بيانات أو Vercel Blob
-- Python غير متوفر افتراضياً في الدوال
+بدائل: Docker على VPS (`docker-compose.yml`) أو Render.
 
-**للتشغيل الكامل**: انشر على [Railway](https://railway.app) أو [Render](https://render.com) أو خادم VPS — هذه تدعم عمليات طويلة وتخزين دائم.
+**Vercel** لا يشغّل Ollama على خوادمه، لذا غير مناسب لهذا المشروع كما هو.
 
-**للنشر على Vercel** (واجهة فقط أو مع backend معدّل):
+### متغيرات البيئة (عند النشر)
 
-```bash
-# تثبيت Vercel CLI
-npm i -g vercel
+| المتغير | مثال |
+|---------|------|
+| `OLLAMA_URL` | `http://ollama:11434` (داخل Docker) أو عنوان خادم Ollama |
+| `PORT` | يضبطه المستضيف (Railway/Render) تلقائياً غالباً |
 
-# النشر
-vercel
-```
+محلياً: `OLLAMA_URL` الافتراضي `http://127.0.0.1:11434`
 
 ---
 
 ## هيكل المشروع
 
 ```
-├── server.js          # خادم Express والـ API
-├── api/index.js       # نقطة دخول Vercel
+├── server.js           # خادم Express والـ API
+├── Dockerfile          # صورة Docker للتطبيق
+├── docker-compose.yml  # تطبيق + Ollama معاً
+├── DEPLOY.md           # دليل النشر (Railway أولاً)
+├── railway.toml        # إعداد بناء Railway من Dockerfile
 ├── public/
-│   ├── index.html     # صفحة البحث (العملاء)
-│   ├── admin.html     # صفحة الإدارة
-│   ├── styles.css     # الأنماط المشتركة
-│   └── extract_pptx_text.py  # استخراج نص PPTX
-├── data/
-│   ├── index.json     # الفهرس
-│   └── uploads/       # ملفات مؤقتة
-├── requirements.txt   # تبعيات Python
-└── vercel.json       # إعدادات Vercel
+│   ├── index.html
+│   ├── admin.html
+│   ├── styles.css
+│   └── extract_pptx_text.py
+├── data/               # الفهرس (محلياً أو volume في Docker)
+├── requirements.txt
+└── vercel.json         # اختياري (نشر تجريبي)
 ```
 
 ## الترخيص

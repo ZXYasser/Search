@@ -2,24 +2,35 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import fileUpload from "express-fileupload";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(fileUpload({ limits: { fileSize: 50 * 1024 * 1024 } }));
-app.use(express.static("public"));
 
-const PORT = 3000;
-const DATA_DIR = path.join(process.cwd(), "data");
+const PORT = Number(process.env.PORT) || 3000;
+const IS_VERCEL = !!process.env.VERCEL;
+const DATA_DIR = IS_VERCEL ? "/tmp/search-data" : path.join(process.cwd(), "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const INDEX_PATH = path.join(DATA_DIR, "index.json");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch (e) {
+  console.warn("Could not create data dir:", e.message);
+}
 
-const OLLAMA_URL = "http://127.0.0.1:11434";
+app.get("/favicon.ico", (_, res) => res.status(204).end());
+app.use(express.static(path.join(__dirname, "public")));
+
+const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
+const PYTHON_CMD = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
 
 // --------- helpers ----------
 function chunkText(text, chunkSize = 900, overlap = 150) {
@@ -45,6 +56,7 @@ function norm(a) {
   return Math.sqrt(dot(a, a));
 }
 function cosine(a, b) {
+  if (!a?.length || !b?.length || a.length !== b.length) return 0;
   const na = norm(a), nb = norm(b);
   if (!na || !nb) return 0;
   return dot(a, b) / (na * nb);
@@ -71,8 +83,8 @@ async function ollamaEmbed(texts) {
 async function extractPptxText(filePath) {
   return new Promise((resolve, reject) => {
     const extPath = path.join(UPLOADS_DIR, `extracted_${Date.now()}.txt`);
-    const py = spawn("python", [
-      path.join(process.cwd(), "public", "extract_pptx_text.py"),
+    const py = spawn(PYTHON_CMD, [
+      path.join(__dirname, "public", "extract_pptx_text.py"),
       filePath,
       extPath
     ], { stdio: ["pipe", "pipe", "pipe"] });
@@ -96,14 +108,19 @@ function saveIndex(obj) {
 
 function loadIndex() {
   if (!fs.existsSync(INDEX_PATH)) return null;
-  const raw = fs.readFileSync(INDEX_PATH, "utf-8");
-  const idx = JSON.parse(raw);
-  if (idx.chunks && idx.chunks.length > 0 && idx.chunks[0].fileId === undefined) {
-    idx.files = [{ id: "default", title: "مستند", chunkCount: idx.chunks.length }];
-    idx.chunks.forEach((c, i) => { c.fileId = "default"; });
-    saveIndex(idx);
+  try {
+    const raw = fs.readFileSync(INDEX_PATH, "utf-8");
+    const idx = JSON.parse(raw);
+    if (idx.chunks && idx.chunks.length > 0 && idx.chunks[0].fileId === undefined) {
+      idx.files = [{ id: "default", title: "مستند", chunkCount: idx.chunks.length }];
+      idx.chunks.forEach((c) => { c.fileId = "default"; });
+      saveIndex(idx);
+    }
+    return idx;
+  } catch (e) {
+    console.error("loadIndex:", e.message);
+    return null;
   }
-  return idx;
 }
 
 // --------- routes ----------

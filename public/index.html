@@ -72,6 +72,7 @@
 <script>
 let selectedFileId = null;
 let filesData = [];
+let lastSearchResults = [];
 
 async function loadFiles() {
   const el = document.getElementById("filesGrid");
@@ -178,9 +179,10 @@ async function doSearch() {
       return;
     }
 
+    lastSearchResults = data.results;
     el.innerHTML = data.results.map((it, idx) => `
       <div class="result-card">
-        <button class="btn btn-secondary btn-copy" data-text="${escapeHtml(it.text).replace(/"/g, '&quot;')}" title="نسخ">📋</button>
+        <button type="button" class="btn btn-secondary btn-copy" data-idx="${idx}" title="نسخ">📋</button>
         <div class="result-meta">
           <span class="result-badge">النتيجة ${idx + 1}</span>
           <span>التشابه: ${it.score.toFixed(3)}</span>
@@ -191,7 +193,8 @@ async function doSearch() {
 
     el.querySelectorAll(".btn-copy").forEach(btn => {
       btn.addEventListener("click", () => {
-        const text = btn.dataset.text || "";
+        const i = parseInt(btn.dataset.idx, 10);
+        const text = lastSearchResults[i]?.text || "";
         navigator.clipboard?.writeText(text).then(() => {
           btn.textContent = "✓";
           setTimeout(() => btn.textContent = "📋", 1500);

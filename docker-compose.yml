@@ -1,0 +1,30 @@
+# تشغيل كامل: تطبيق الويب + Ollama على نفس الشبكة
+# بعد التشغيل مرة واحدة نفّذ: docker compose exec ollama ollama pull nomic-embed-text
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    # للوصول لـ Ollama من خارج Docker (اختياري):
+    # ports:
+    #   - "11434:11434"
+
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      PORT: "3000"
+      PYTHON_CMD: python3
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  app_data:
