@@ -30,6 +30,7 @@ app.get("/favicon.ico", (_, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, "public")));
 
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
+const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
 const PYTHON_CMD = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
 
 // --------- helpers ----------
@@ -62,13 +63,13 @@ function cosine(a, b) {
   return dot(a, b) / (na * nb);
 }
 
-async function ollamaEmbed(texts) {
+async function ollamaEmbed(texts, model = OLLAMA_EMBED_MODEL) {
   const out = [];
   for (const t of texts) {
     const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "nomic-embed-text", prompt: t })
+      body: JSON.stringify({ model, prompt: t })
     });
     if (!r.ok) {
       const err = await r.text();
@@ -195,7 +196,8 @@ app.post("/api/index", async (req, res) => {
       embedding: null
     }));
 
-    const embeddings = await ollamaEmbed(allNewChunks.map(c => c.text));
+    const embedModel = existingIndex?.model || OLLAMA_EMBED_MODEL;
+    const embeddings = await ollamaEmbed(allNewChunks.map(c => c.text), embedModel);
     allNewChunks.forEach((c, i) => { c.embedding = embeddings[i]; });
 
     const newFile = { id: fileId, title: documentName, chunkCount: newChunks.length };
@@ -211,7 +213,7 @@ app.post("/api/index", async (req, res) => {
         }
       : {
           createdAt: new Date().toISOString(),
-          model: "nomic-embed-text",
+          model: OLLAMA_EMBED_MODEL,
           chunkSize,
           overlap,
           files: [newFile],
@@ -254,7 +256,8 @@ app.post("/api/search", async (req, res) => {
       });
     }
 
-    const [qVec] = await ollamaEmbed([q]);
+    const embedModel = idx.model || OLLAMA_EMBED_MODEL;
+    const [qVec] = await ollamaEmbed([q], embedModel);
 
     const scored = keywordMatches.map(ch => ({
       id: ch.id,
@@ -278,7 +281,7 @@ if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`✅ Web: http://localhost:${PORT}`);
     console.log(`✅ Admin: http://localhost:${PORT}/admin.html`);
-    console.log(`✅ Ollama: ${OLLAMA_URL}`);
+    console.log(`✅ Ollama: ${OLLAMA_URL} (embed: ${OLLAMA_EMBED_MODEL})`);
   });
 }
 
