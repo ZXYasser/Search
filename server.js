@@ -30,7 +30,8 @@ app.get("/favicon.ico", (_, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, "public")));
 
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
-const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+// افتراضي خفيف مناسب لخطط الرام المحدودة (Render مجاني). للجودة الأعلى محلياً: OLLAMA_EMBED_MODEL=nomic-embed-text
+const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "all-minilm";
 const PYTHON_CMD = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
 
 // --------- helpers ----------
@@ -73,6 +74,7 @@ function sameEmbedModel(a, b) {
 async function ollamaEmbed(texts, model = OLLAMA_EMBED_MODEL) {
   const out = [];
   for (const t of texts) {
+    console.log("[ollamaEmbed] model=%s chars=%s", model, t.length);
     const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -139,7 +141,10 @@ app.get("/api/status", (req, res) => {
     hasIndex: !!idx,
     chunks: idx?.chunks?.length || 0,
     files: idx?.files || [],
-    createdAt: idx?.createdAt || null
+    createdAt: idx?.createdAt || null,
+    indexModel: idx?.model ?? null,
+    ollamaUrl: OLLAMA_URL,
+    ollamaEmbedModel: OLLAMA_EMBED_MODEL
   });
 });
 
@@ -221,10 +226,7 @@ app.post("/api/index", async (req, res) => {
       embedding: null
     }));
 
-    const embedModel = existingIndex?.chunks?.length
-      ? (existingIndex.model || OLLAMA_EMBED_MODEL)
-      : OLLAMA_EMBED_MODEL;
-    const embeddings = await ollamaEmbed(allNewChunks.map(c => c.text), embedModel);
+    const embeddings = await ollamaEmbed(allNewChunks.map(c => c.text), OLLAMA_EMBED_MODEL);
     allNewChunks.forEach((c, i) => { c.embedding = embeddings[i]; });
 
     const newFile = { id: fileId, title: documentName, chunkCount: newChunks.length };
