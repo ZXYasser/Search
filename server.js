@@ -34,7 +34,32 @@ const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "all-minilm";
 // all-minilm نافذة ~512 رمز؛ النصوص العربية الطويلة تحتاج حد أحرف أقل (قابل للزيادة مع nomic عبر البيئة)
 const OLLAMA_EMBED_MAX_CHARS = Math.max(64, Number(process.env.OLLAMA_EMBED_MAX_CHARS) || 380);
+// على Render: تهدئة بين طلبات التضمين تقلل أخطاء 502 من البوابة عند الملفات الضخمة
+const OLLAMA_EMBED_DELAY_MS = Math.max(0, Number(process.env.OLLAMA_EMBED_DELAY_MS) || 250);
+const OLLAMA_EMBED_TIMEOUT_MS = Math.max(10_000, Number(process.env.OLLAMA_EMBED_TIMEOUT_MS) || 120_000);
+const OLLAMA_EMBED_RETRIES = Math.max(1, Math.min(8, Number(process.env.OLLAMA_EMBED_RETRIES) || 5));
 const PYTHON_CMD = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatOllamaHttpError(status, body) {
+  const t = (body || "").trim();
+  if (
+    status === 502 ||
+    /<!DOCTYPE/i.test(t) ||
+    /Bad Gateway/i.test(t) ||
+    /502/i.test(t.slice(0, 80))
+  ) {
+    return (
+      `البوابة / خدمة Ollama أعادت 502 (غير متاحة مؤقتاً أو مزدحمة). مع ملفات كبيرة قلّل الحمل: ` +
+      `OLLAMA_EMBED_DELAY_MS (مثلاً 400)، أو قسّم الملف، أو ارفع خطة Ollama على Render.`
+    );
+  }
+  const short = t.length > 400 ? `${t.slice(0, 400)}…` : t;
+  return `HTTP ${status}${short ? `: ${short}` : ""}`;
+}
 
 // --------- helpers ----------
 function chunkText(text, chunkSize = 900, overlap = 150) {
@@ -90,17 +115,70 @@ function averageEmbeddings(vectors) {
 }
 
 async function ollamaEmbedOnePiece(prompt, model) {
-  const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, prompt })
-  });
-  if (!r.ok) {
-    const err = await r.text();
-    throw new Error("Ollama embeddings error: " + err);
+  let lastErr;
+  for (let attempt = 1; attempt <= OLLAMA_EMBED_RETRIES; attempt++) {
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), OLLAMA_EMBED_TIMEOUT_MS);
+    try {
+      const r = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, prompt }),
+        signal: ac.signal
+      });
+      clearTimeout(to);
+      if (!r.ok) {
+        const errText = await r.text();
+        const msg = formatOllamaHttpError(r.status, errText);
+        lastErr = new Error("Ollama embeddings error: " + msg);
+        const retryable = r.status === 429 || r.status >= 500;
+        if (!retryable || attempt === OLLAMA_EMBED_RETRIES) throw lastErr;
+        const wait = Math.min(30_000, 1000 * 2 ** (attempt - 1));
+        console.warn(
+          "[ollamaEmbedOnePiece] retry %s/%s status=%s wait=%sms",
+          attempt,
+          OLLAMA_EMBED_RETRIES,
+          r.status,
+          wait
+        );
+        await sleep(wait);
+        continue;
+      }
+      let data;
+      try {
+        data = await r.json();
+      } catch (parseErr) {
+        lastErr = new Error("Ollama embeddings error: استجابة غير JSON من الخادم.");
+        throw lastErr;
+      }
+      if (!data?.embedding?.length) {
+        throw new Error("Ollama embeddings error: لا يوجد متجه في الاستجابة.");
+      }
+      if (OLLAMA_EMBED_DELAY_MS > 0) await sleep(OLLAMA_EMBED_DELAY_MS);
+      return data.embedding;
+    } catch (e) {
+      clearTimeout(to);
+      const msg = e?.message || "";
+      if (e instanceof SyntaxError) {
+        throw new Error("Ollama embeddings error: استجابة غير JSON من الخادم.");
+      }
+      if (msg.includes("استجابة غير JSON") || msg.includes("لا يوجد متجه")) {
+        throw e;
+      }
+      if (e?.name === "AbortError") {
+        lastErr = new Error(
+          "Ollama embeddings error: انتهت مهلة الطلب. جرّب رفع OLLAMA_EMBED_TIMEOUT_MS أو تقليل حجم الملف."
+        );
+      } else {
+        lastErr = e;
+      }
+      if (attempt === OLLAMA_EMBED_RETRIES) throw lastErr;
+      const wait = Math.min(30_000, 1000 * 2 ** (attempt - 1));
+      console.warn("[ollamaEmbedOnePiece] retry after error attempt=%s: %s", attempt, lastErr.message);
+      await sleep(wait);
+    }
   }
-  const data = await r.json();
-  return data.embedding;
+  throw lastErr;
 }
 
 async function ollamaEmbedSingleText(text, model = OLLAMA_EMBED_MODEL) {
@@ -186,7 +264,9 @@ app.get("/api/status", (req, res) => {
     createdAt: idx?.createdAt || null,
     indexModel: idx?.model ?? null,
     ollamaUrl: OLLAMA_URL,
-    ollamaEmbedModel: OLLAMA_EMBED_MODEL
+    ollamaEmbedModel: OLLAMA_EMBED_MODEL,
+    ollamaEmbedDelayMs: OLLAMA_EMBED_DELAY_MS,
+    ollamaEmbedMaxChars: OLLAMA_EMBED_MAX_CHARS
   });
 });
 
