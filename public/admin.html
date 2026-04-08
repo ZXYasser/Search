@@ -90,6 +90,7 @@
         إذا غيّرت نموذج التضمين على الخادم (مثلاً من nomic إلى all-minilm)، امسح الفهرس ثم أعد البناء.
         مع <code>all-minilm</code> يمكن الإبقاء على حجم المقطع 900؛ الخادم يقسّم تلقائياً للحد المسموح لـ Ollama.
         إذا ظهر خطأ 502 على Render مع ملف كبير، عيّن على خدمة البحث <code>OLLAMA_EMBED_DELAY_MS=400</code> (أو أكثر) واضبط خدمة Ollama على بقاء التشغيل.
+        مع <code>all-minilm</code> (سياق ~512 توكن) الخادم يقسّم تلقائياً؛ مع <code>nomic-embed-text</code> يمكنك رفع <code>OLLAMA_EMBED_MAX_CHARS</code> في البيئة.
       </p>
       <div class="row" style="margin-top:8px">
         <button type="button" class="btn" id="resetIndex" style="border-color:var(--error);color:var(--error)">مسح الفهرس بالكامل</button>

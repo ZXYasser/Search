@@ -32,8 +32,9 @@ app.use(express.static(path.join(__dirname, "public")));
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
 // افتراضي خفيف مناسب لخطط الرام المحدودة (Render مجاني). للجودة الأعلى محلياً: OLLAMA_EMBED_MODEL=nomic-embed-text
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "all-minilm";
-// all-minilm نافذة ~512 رمز؛ النصوص العربية الطويلة تحتاج حد أحرف أقل (قابل للزيادة مع nomic عبر البيئة)
-const OLLAMA_EMBED_MAX_CHARS = Math.max(64, Number(process.env.OLLAMA_EMBED_MAX_CHARS) || 380);
+// all-minilm نافذة ~512 توكن؛ الأحرف العربية/الكثيفة قد تستهلك توكنات أكثر من اللاتينية — الافتراضي محافظ.
+// مع nomic-embed-text أو غيره من سياق أعرض: OLLAMA_EMBED_MAX_CHARS=1200 مثلاً
+const OLLAMA_EMBED_MAX_CHARS = Math.max(64, Number(process.env.OLLAMA_EMBED_MAX_CHARS) || 200);
 // على Render: تهدئة بين طلبات التضمين تقلل أخطاء 502 من البوابة عند الملفات الضخمة
 const OLLAMA_EMBED_DELAY_MS = Math.max(0, Number(process.env.OLLAMA_EMBED_DELAY_MS) || 250);
 const OLLAMA_EMBED_TIMEOUT_MS = Math.max(10_000, Number(process.env.OLLAMA_EMBED_TIMEOUT_MS) || 120_000);
@@ -59,6 +60,10 @@ function formatOllamaHttpError(status, body) {
   }
   const short = t.length > 400 ? `${t.slice(0, 400)}…` : t;
   return `HTTP ${status}${short ? `: ${short}` : ""}`;
+}
+
+function isOllamaContextOverflowMessage(s) {
+  return /context length|exceeds the context/i.test(s || "");
 }
 
 // --------- helpers ----------
@@ -131,7 +136,10 @@ async function ollamaEmbedOnePiece(prompt, model) {
         const errText = await r.text();
         const msg = formatOllamaHttpError(r.status, errText);
         lastErr = new Error("Ollama embeddings error: " + msg);
-        const retryable = r.status === 429 || r.status >= 500;
+        const contextOverflow = isOllamaContextOverflowMessage(errText);
+        // تجاوز السياق لن يُصلَح بإعادة المحاولة بنفس النص
+        const retryable =
+          !contextOverflow && (r.status === 429 || r.status >= 500);
         if (!retryable || attempt === OLLAMA_EMBED_RETRIES) throw lastErr;
         const wait = Math.min(30_000, 1000 * 2 ** (attempt - 1));
         console.warn(
@@ -159,6 +167,7 @@ async function ollamaEmbedOnePiece(prompt, model) {
     } catch (e) {
       clearTimeout(to);
       const msg = e?.message || "";
+      if (isOllamaContextOverflowMessage(msg)) throw e;
       if (e instanceof SyntaxError) {
         throw new Error("Ollama embeddings error: استجابة غير JSON من الخادم.");
       }
@@ -181,6 +190,29 @@ async function ollamaEmbedOnePiece(prompt, model) {
   throw lastErr;
 }
 
+/** تقسيم تدريجي عند رد Ollama بتجاوز طول السياق (توكنات أكثر من نافذة النموذج). */
+async function ollamaEmbedWithContextFallback(text, model, minChars = 48) {
+  const s = (text || "").trim();
+  if (!s) {
+    throw new Error("فشل التضمين: مقطع نصي فارغ.");
+  }
+  if (s.length <= minChars) {
+    return ollamaEmbedOnePiece(s, model);
+  }
+  try {
+    return await ollamaEmbedOnePiece(s, model);
+  } catch (e) {
+    const msg = e?.message || "";
+    if (!isOllamaContextOverflowMessage(msg)) throw e;
+    if (s.length <= minChars + 1) throw e;
+    const mid = Math.floor(s.length / 2);
+    if (mid < 1) throw e;
+    const a = await ollamaEmbedWithContextFallback(s.slice(0, mid), model, minChars);
+    const b = await ollamaEmbedWithContextFallback(s.slice(mid), model, minChars);
+    return averageEmbeddings([a, b]);
+  }
+}
+
 async function ollamaEmbedSingleText(text, model = OLLAMA_EMBED_MODEL) {
   const trimmed = (text || "").trim();
   if (!trimmed) {
@@ -188,7 +220,7 @@ async function ollamaEmbedSingleText(text, model = OLLAMA_EMBED_MODEL) {
   }
   const max = OLLAMA_EMBED_MAX_CHARS;
   if (trimmed.length <= max) {
-    return ollamaEmbedOnePiece(trimmed, model);
+    return ollamaEmbedWithContextFallback(trimmed, model);
   }
   const pieces = [];
   for (let i = 0; i < trimmed.length; i += max) {
@@ -196,7 +228,7 @@ async function ollamaEmbedSingleText(text, model = OLLAMA_EMBED_MODEL) {
   }
   const vectors = [];
   for (const p of pieces) {
-    vectors.push(await ollamaEmbedOnePiece(p, model));
+    vectors.push(await ollamaEmbedWithContextFallback(p, model));
   }
   return averageEmbeddings(vectors);
 }
